@@ -2,14 +2,12 @@ import streamlit as st
 import pandas as pd
 import random
 import io
+import openpyxl
+from openpyxl.utils import get_column_letter
 
-st.set_page_config(page_title="CLO Marks Distributor", layout="wide")
+st.set_page_config(page_title="OBE Marks Distributor & Mapper", layout="wide")
 
 def distribute_marks(obtained, clo_max_marks):
-    """
-    Randomly distributes the obtained marks across CLOs without exceeding max marks.
-    Handles both integers and standard float increments (e.g., 0.5, 1.0).
-    """
     try:
         obtained = float(obtained)
     except (ValueError, TypeError):
@@ -21,113 +19,99 @@ def distribute_marks(obtained, clo_max_marks):
     allocated = [0.0] * len(clo_max_marks)
     remaining = obtained
     
-    # Loop until all marks are distributed (using a small threshold for float precision)
     while remaining > 0.001:
-        # Find which CLOs can still accept marks
         available_indices = [i for i, max_val in enumerate(clo_max_marks) if allocated[i] < max_val]
-        
         if not available_indices:
-            break # Student obtained marks exceed total available CLO marks
+            break
             
         idx = random.choice(available_indices)
-        
-        # Calculate how much space is left in this specific CLO
         space_left = clo_max_marks[idx] - allocated[idx]
-        
-        # Add marks in chunks of 1 (or the remaining fraction if less than 1)
-        # This simulates realistic grading steps
         chunk = min(1.0, remaining, space_left)
-        
         allocated[idx] += chunk
         remaining -= chunk
         
-    # Round to avoid weird floating point artifacts (e.g., 4.999999)
     return [round(m, 2) for m in allocated]
 
 def main():
-    st.title("🎓 CLO Marks Random Distributor")
-    st.markdown("Upload a student roster, define your CLOs, and randomly split their total marks into individual CLO scores.")
+    st.title("🎓 OBE Marks Distributor & Template Mapper")
 
-    # --- STEP 1: FILE UPLOAD ---
-    st.header("1. Upload Data")
-    uploaded_file = st.file_uploader("Upload an Excel or CSV file", type=['csv', 'xlsx', 'xls'])
+    # --- 1. UPLOAD DATA ---
+    st.header("1. Upload Student Marks")
+    uploaded_file = st.file_uploader("Upload Source File (CSV/Excel)", type=['csv', 'xlsx', 'xls'])
 
-    if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
-            st.success("File uploaded successfully!")
-            with st.expander("Preview Uploaded Data"):
-                st.dataframe(df.head())
-                
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
-            return
-
-        # --- STEP 2: COLUMN MAPPING ---
-        st.header("2. Map Columns")
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
         cols = df.columns.tolist()
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            name_col = st.selectbox("Select 'Name' Column", options=["Skip"] + cols)
-        with col2:
-            roll_col = st.selectbox("Select 'Roll No' Column", options=["Skip"] + cols)
-        with col3:
-            marks_col = st.selectbox("Select 'Obtained Marks' Column", options=cols, index=len(cols)-1)
+        c1, c2, c3 = st.columns(3)
+        name_col = c1.selectbox("Name Column", cols)
+        roll_col = c2.selectbox("Roll No Column", cols)
+        marks_col = c3.selectbox("Total Obtained Marks Column", cols)
 
-        # --- STEP 3: CLO CONFIGURATION ---
-        st.header("3. Configure CLOs")
-        num_clos = st.number_input("How many CLOs are there?", min_value=1, max_value=20, value=3)
-        
+        # --- 2. CONFIGURE CLOs ---
+        st.header("2. CLO Configuration")
+        num_clos = st.number_input("Number of CLOs", min_value=1, value=3)
         clo_max_marks = []
-        clo_cols = st.columns(num_clos)
-        
+        clo_ui_cols = st.columns(num_clos)
         for i in range(num_clos):
-            with clo_cols[i]:
-                max_mark = st.number_input(f"Max Marks for CLO {i+1}", min_value=1.0, value=10.0, step=1.0)
-                clo_max_marks.append(max_mark)
-                
-        total_clo_marks = sum(clo_max_marks)
-        st.info(f"**Total Available Marks (Sum of CLOs): {total_clo_marks}**")
+            clo_max_marks.append(clo_ui_cols[i].number_input(f"Max CLO {i+1}", min_value=1.0, value=10.0))
 
-        # --- STEP 4: PROCESSING ---
-        st.header("4. Process and Download")
-        if st.button("Generate CLO Split", type="primary"):
-            # Check if any student has more marks than the max allowed
-            max_student_marks = df[marks_col].max()
-            if max_student_marks > total_clo_marks:
-                st.warning(f"Warning: A student has {max_student_marks} marks, which is higher than the total CLO marks ({total_clo_marks}). Their marks will be capped.")
-
-            # Create a copy for the output
-            out_df = df.copy()
-            
-            # Apply the distribution logic
-            clo_results = out_df[marks_col].apply(lambda x: distribute_marks(x, clo_max_marks))
-            
-            # Create new columns for each CLO
+        # --- 3. GENERATE INTERMEDIATE DATA ---
+        if st.button("Generate Randomized Splits"):
+            clo_results = df[marks_col].apply(lambda x: distribute_marks(x, clo_max_marks))
             for i in range(num_clos):
-                clo_name = f"CLO {i+1} (Max: {clo_max_marks[i]})"
-                out_df[clo_name] = [res[i] for res in clo_results]
+                df[f"CLO_{i+1}_GEN"] = [res[i] for res in clo_results]
+            st.session_state['processed_df'] = df
+            st.success("Marks Distributed!")
+            st.dataframe(df.head())
+
+        # --- 4. TEMPLATE MAPPING ---
+        if 'processed_df' in st.session_state:
+            st.header("3. Map to OBE Template")
+            template_file = st.file_uploader("Upload your Department OBE Template (Excel)", type=['xlsx'])
+            
+            if template_file:
+                # Load template to get sheet names
+                wb_temp = openpyxl.load_workbook(template_file)
+                sheet_name = st.selectbox("Select Sheet in Template", wb_temp.sheetnames)
+                sheet = wb_temp[sheet_name]
                 
-            st.success("Marks distributed successfully!")
-            st.dataframe(out_df)
+                st.info("Specify the STARTING ROW and COLUMN LETTERS in your template:")
+                
+                t1, t2, t3 = st.columns(3)
+                start_row = t1.number_input("Starting Row (where 1st student goes)", min_value=1, value=5)
+                name_target = t2.text_input("Name Column Letter (e.g., B)", "B").upper()
+                roll_target = t3.text_input("Roll No Column Letter (e.g., A)", "A").upper()
 
-            # Export logic
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                out_df.to_excel(writer, index=False, sheet_name='CLO Marks')
-            output.seek(0)
+                clo_target_cols = []
+                st.write("Map Generated CLOs to Template Columns:")
+                t_cols = st.columns(num_clos)
+                for i in range(num_clos):
+                    col_let = t_cols[i].text_input(f"CLO {i+1} Letter", value=get_column_letter(4+i)).upper()
+                    clo_target_cols.append(col_let)
 
-            st.download_button(
-                label="📥 Download Processed Excel File",
-                data=output,
-                file_name="distributed_clo_marks.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                if st.button("Finalize and Map to Template"):
+                    # Writing data to the template
+                    final_df = st.session_state['processed_df']
+                    
+                    for index, row in final_df.iterrows():
+                        current_row = start_row + index
+                        sheet[f"{name_target}{current_row}"] = row[name_col]
+                        sheet[f"{roll_target}{current_row}"] = row[roll_col]
+                        for i in range(num_clos):
+                            sheet[f"{clo_target_cols[i]}{current_row}"] = row[f"CLO_{i+1}_GEN"]
+
+                    # Save to buffer
+                    out_buffer = io.BytesIO()
+                    wb_temp.save(out_buffer)
+                    out_buffer.seek(0)
+                    
+                    st.download_button(
+                        label="📥 Download Mapped OBE Template",
+                        data=out_buffer,
+                        file_name="Mapped_OBE_Result.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
 if __name__ == "__main__":
     main()
