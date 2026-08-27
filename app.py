@@ -72,13 +72,13 @@ def main():
     with st.sidebar:
         st.header("Help & Instructions")
         st.info("""
-        1. **Upload**: Support .csv, .xlsx, .xls (including HTML exports).
+        1. **Upload**: Support .csv, .xlsx, .xls (including HTML exports from university portals).
         2. **Configure**: Define your CLO max marks.
         3. **Process**: Randomly distribute marks per student.
         4. **Map**: Upload your university template to auto-fill.
         """)
         st.divider()
-        st.caption("v2.0 - Universal Format Support")
+        st.caption("v2.1 - Robust HTML .xls Recovery")
 
     tab1, tab2 = st.tabs(["📊 1. Distribution Engine", "📄 2. Template Mapper"])
 
@@ -103,10 +103,36 @@ def main():
                         engine = 'xlrd' if file_ext == 'xls' else 'openpyxl'
                         df = pd.read_excel(uploaded_file, engine=engine)
                     except Exception as e:
-                        if "BOF" in str(e) or "html" in str(e).lower():
+                        error_msg = str(e).lower()
+                        # Broad match for common Excel/HTML mismatch errors
+                        if any(x in error_msg for x in [
+                            "bof", "html", "unsupported format", "xlrd",
+                            "openpyxl", "no text parsed", "expected bof",
+                            "file is not a zip", "workbook"
+                        ]):
                             st.info("🔄 Technical format mismatch detected. Activating HTML Recovery Mode...")
-                            html_tables = pd.read_html(uploaded_file)
-                            df = html_tables[0]
+                            
+                            # Critical: reset pointer and read raw bytes
+                            uploaded_file.seek(0)
+                            content = uploaded_file.read()
+                            
+                            # Decode as text (try utf-8 first, then latin-1)
+                            try:
+                                html_content = content.decode('utf-8')
+                            except UnicodeDecodeError:
+                                html_content = content.decode('latin-1')
+                            
+                            # Parse HTML tables via StringIO
+                            html_tables = pd.read_html(io.StringIO(html_content))
+                            
+                            if not html_tables:
+                                raise ValueError("No tables found in the HTML content.")
+                            
+                            # Prefer the largest table (usually the marks roster)
+                            df = max(html_tables, key=lambda t: t.shape[0] * t.shape[1])
+                            
+                            # Clean column names (common with HTML exports)
+                            df.columns = [str(c).strip() for c in df.columns]
                         else:
                             raise e
 
@@ -147,6 +173,9 @@ def main():
                         
                         st.session_state['processed_df'] = df
                         st.session_state['num_clos'] = num_clos
+                        # Keep column names for Template Mapper
+                        st.session_state['name_col'] = name_col
+                        st.session_state['roll_col'] = roll_col
                         st.balloons()
                         st.success("Marks Distributed! Proceed to 'Template Mapper' tab.")
                         st.dataframe(df.head(), use_container_width=True)
@@ -188,6 +217,8 @@ def main():
                     if st.button("🪄 Finalize & Map Template"):
                         with st.spinner("Writing to template..."):
                             final_df = st.session_state['processed_df']
+                            name_col = st.session_state.get('name_col')
+                            roll_col = st.session_state.get('roll_col')
                             for idx, row in final_df.iterrows():
                                 curr = int(start_row + idx)
                                 sheet[f"{name_target}{curr}"] = row[name_col]
