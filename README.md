@@ -2,7 +2,7 @@
 
 Randomly distributing a fixed total (the student's obtained marks) across multiple buckets (the CLOs) without exceeding the maximum capacity of any single bucket.
 
-Ready-to-run Streamlit application that handles file upload, column mapping, dynamic CLO configuration, and randomized distribution logic.
+Ready-to-run Streamlit application for OBE / QOBE mark workflows.
 
 **Live app:** [dynamic-clo-configuration-and-the-randomized-distribution-logi.streamlit.app](https://dynamic-clo-configuration-and-the-randomized-distribution-logi.streamlit.app/)
 
@@ -13,24 +13,36 @@ Ready-to-run Streamlit application that handles file upload, column mapping, dyn
 - Dynamic CLO count and max-marks configuration
 - Randomized mark distribution that never exceeds any CLO capacity
 - Map results into an official university Excel template
+- **Bulk QOBE Update (v2.2)** – fill empty QOBE Activity Outcome templates from UIS marks files
 
-## Recent fix (v2.1)
+## Tab 3 – Bulk QOBE Update
 
-Fixed the error:
+1. Upload **UIS marks file** (e.g. Book123.xlsx with columns Q1, Q2, A1… Mid1, Final1, CP1…)
+2. Upload **empty QOBE Activity Outcome** template (Registration No. + Name + question columns)
+3. Confirm auto-detected mapping (Assignment 1 → A1, Mid → Mid1, etc.)
+4. Choose mode per activity:
+   - **Direct** – copy total into the first Q column (for single-question activities)
+   - **Distribute** – randomly split the total across all Q columns of that activity (Mid / Final)
+5. Handle Absent (`A`) as empty cell or `0`
+6. Download the filled QOBE template, matched by Registration / Roll No.
 
-```
-Technical format mismatch detected. Activating HTML Recovery Mode...
-Error reading file: no text parsed from document (line 0)
-```
+### Typical mapping (Professional Practices example)
 
-**Cause:** University portals often export HTML tables with a `.xls` extension. After the failed Excel parse, the file pointer was at EOF and `pd.read_html` received an empty stream.
+| QOBE Activity | UIS column | Mode |
+|---|---|---|
+| Assignment 1 / 2 / 3 | A1 / A2 / A3 | Direct |
+| Quiz 1 / 2 / 3 | Q1 / Q2 / Q3 | Direct |
+| Mid Term (Q1–Q5) | Mid1 | Distribute |
+| Final Exam (Q1–Q4) | Final1 | Distribute |
+| Class / Project Work 1–3 | CP1 / CP2 / CP3 | Direct |
 
-**Solution:**
-1. `uploaded_file.seek(0)` + read raw bytes
-2. Decode as UTF-8 / Latin-1
-3. Parse with `pd.read_html(io.StringIO(...))`
-4. Automatically select the largest table (the marks roster)
-5. Clean column names
+## Recent changes
+
+### v2.2 – Bulk QOBE Update
+New tab that maps a full UIS marks export into an empty QOBE Activity Outcome workbook in one click.
+
+### v2.1 – HTML .xls recovery
+Fixed `no text parsed from document (line 0)` when portals export HTML tables as `.xls`.
 
 ## Run locally
 
